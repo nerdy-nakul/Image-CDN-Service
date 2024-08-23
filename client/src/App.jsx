@@ -67,7 +67,7 @@ const App = () => {
 
     try {
       const response = await axios.post(
-        "http://localhost:5000/api/v1/image/upload",
+        "https://image-cdn-service-tpa8.vercel.app/api/v1/image/upload",
         formData,
         {
           headers: {
