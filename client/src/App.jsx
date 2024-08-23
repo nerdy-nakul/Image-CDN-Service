@@ -1,49 +1,73 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import axios from "axios";
-import toast from "react-hot-toast";
+import { toast } from "react-hot-toast";
+import ImagePreview from "./components/ImagePreview";
+import CdnLink from "./components/CdnLink";
+import Lightbox from "./components/Lightbox";
+
+const MAX_PHOTOS = 8;
 
 const App = () => {
-  const [selectedImage, setSelectedImage] = useState("");
-  const [imagePreview, setImagePreview] = useState("");
-  const fileInputRef = useRef(null); // Use ref to access the input element
+  const [images, setImages] = useState([]);
+  const [cdnLinks, setCdnLinks] = useState([]);
+  const [lightboxImage, setLightboxImage] = useState(null);
+  const fileInputRef = useRef(null);
 
-  const [textToCopy, setTextToCopy] = useState("CDN link will appear here");
-  const handleCopy = () => {
-    navigator.clipboard.writeText(textToCopy).then(() => {
-      toast.success("Text copied to clipboard!");
+  const handleCopy = useCallback((link) => {
+    navigator.clipboard.writeText(link).then(() => {
+      toast.success("Link copied to clipboard!");
     });
-  };
-
-  // Clean up the URL.createObjectURL after unmounting
-  useEffect(() => {
-    return () => {
-      if (imagePreview) {
-        URL.revokeObjectURL(imagePreview);
-      }
-    };
-  }, [imagePreview]);
+  }, []);
 
   const handleImageChange = (event) => {
-    const file = event.target.files[0];
-    console.log(file);
-    if (file && file.type.startsWith("image/")) {
-      setSelectedImage(file);
-      setImagePreview(URL.createObjectURL(file));
+    const files = Array.from(event.target.files);
+    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+
+    if (imageFiles.length) {
+      const newImages = imageFiles.map((file) => ({
+        file,
+        url: URL.createObjectURL(file),
+      }));
+
+      setImages((prevImages) => {
+        const combinedImages = [...prevImages, ...newImages];
+        if (combinedImages.length > MAX_PHOTOS) {
+          toast.error(`Maximum of ${MAX_PHOTOS} photos allowed.`);
+          return combinedImages.slice(0, MAX_PHOTOS);
+        }
+        return combinedImages;
+      });
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = null;
+      }
     } else {
-      setSelectedImage(null);
-      setImagePreview(null);
+      toast.error("Only images are allowed.");
     }
   };
 
+  const handleRemoveImage = (index) => {
+    setImages((prevImages) => prevImages.filter((_, i) => i !== index));
+    toast("Image removed.", { icon: "🗑️" });
+  };
+
+  const handleRemoveAllImages = () => {
+    setImages([]);
+    toast("All images removed.", { icon: "🗑️" });
+    if (fileInputRef.current) fileInputRef.current.value = null;
+  };
+
   const handleSubmit = async () => {
-    if (!selectedImage) return;
+    if (images.length === 0) return;
 
     const formData = new FormData();
-    formData.append("image", selectedImage);
+    images.forEach(({ file }) => {
+      formData.append("images", file);
+    });
 
     try {
       const response = await axios.post(
-        "http://localhost:5000/api/v1/upload",
+        "http://localhost:5000/api/v1/image/upload",
         formData,
         {
           headers: {
@@ -51,99 +75,110 @@ const App = () => {
           },
         }
       );
-      toast.success("Image uploaded successfully!");
-      console.log("Image uploaded successfully:", response.data);
-      setTextToCopy(response.data.url);
-      setSelectedImage(null);
-      setImagePreview(null);
-      fileInputRef.current.value = null; // Clear the file input value
+
+      toast.success("Images uploaded successfully!");
+      setCdnLinks((prevLinks) => [...prevLinks, ...response.data.urls]);
+
+      setImages([]);
+      if (fileInputRef.current) fileInputRef.current.value = null;
     } catch (error) {
       if (error.response) {
         toast.error(`Error: ${error.response.data}`);
       } else if (error.request) {
         toast.error("No response from server. Please try again later.");
       } else {
-        toast.error("Error uploading image.");
+        toast.error("Error uploading images.");
       }
-      console.error("Error uploading image:", error);
+      console.error("Error uploading images:", error);
     }
   };
 
-  const handleRemoveImage = () => {
-    setSelectedImage("");
-    setImagePreview("");
-    fileInputRef.current.value = null; // Clear the file input value
-    toast.error("Image removed.");
+  const openLightbox = (image) => {
+    setLightboxImage(image);
+  };
+
+  const closeLightbox = () => {
+    setLightboxImage(null);
+  };
+
+  const openFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
   };
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 p-4">
-      <h1 className="text-4xl font-extrabold text-white mb-8 shadow-lg">
-        Upload an Image
+      <h1 className="text-4xl font-extrabold text-white mb-8">
+        Upload Images (Max 8)
       </h1>
 
-      <div className="w-full max-w-sm">
-        <label htmlFor="image_input" className="block mb-4 cursor-pointer">
-          <div className="flex flex-col items-center justify-center w-full h-60 bg-white border-4 border-dashed border-gray-300 rounded-xl hover:bg-gray-50 hover:border-indigo-700 transition-all shadow-xl">
-            {imagePreview ? (
-              <img
-                src={imagePreview}
-                alt="Selected"
-                className="h-full w-full object-contain rounded-xl"
-              />
-            ) : (
-              <div className="flex flex-col items-center">
-                <p className="text-gray-500 mt-2">Click to upload an image</p>
-              </div>
-            )}
-          </div>
-        </label>
+      <div className="w-full max-w-md">
+        <div
+          className="flex flex-col items-center justify-center w-full h-60 bg-white border-4 border-dashed border-gray-300 rounded-xl hover:bg-gray-50 hover:border-indigo-700 transition-all shadow-xl cursor-pointer"
+          onClick={openFileInput}
+        >
+          {images.length > 0 ? (
+            <div className="flex flex-wrap gap-2 justify-center">
+              {images.map((preview, index) => (
+                <ImagePreview
+                  key={index}
+                  preview={preview}
+                  index={index}
+                  onRemove={handleRemoveImage}
+                  onOpen={openLightbox}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center">
+              <p className="text-gray-500 mt-2">
+                Click to upload images (Max 8)
+              </p>
+            </div>
+          )}
+        </div>
         <input
           id="image_input"
           type="file"
           accept="image/*"
           className="hidden"
-          ref={fileInputRef} // Attach ref to input element
+          ref={fileInputRef}
           onChange={handleImageChange}
+          multiple
         />
       </div>
 
-      {selectedImage && (
+      {images.length > 0 && (
         <div className="flex gap-8">
           <button
-            onClick={handleRemoveImage}
+            onClick={handleRemoveAllImages}
             className="mt-4 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all shadow-md"
           >
-            Remove Image
+            Remove All Images
           </button>
           <button
             onClick={handleSubmit}
             className="mt-4 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-all shadow-md"
           >
-            Submit Image
+            Submit Images
           </button>
         </div>
       )}
+
       <div className="flex flex-col items-center mt-8">
-        {/* <label htmlFor="cdn" className="text-white text-lg mb-2">
-          CDN Link
-        </label> */}
-        <div className="flex items-center bg-white p-2 rounded-lg shadow-lg">
-          <input
-            type="text"
-            id="cdn"
-            value={textToCopy}
-            readOnly
-            className="w-full text-gray-800 p-2 rounded-lg focus:outline-none"
-          />
-          <button
-            onClick={handleCopy}
-            className="ml-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all shadow-md"
-          >
-            Copy
-          </button>
-        </div>
+        {cdnLinks.length > 0 && (
+          <div className="w-full max-w-lg space-y-4">
+            {cdnLinks.map((link, index) => (
+              <CdnLink key={index} link={link} onCopy={handleCopy} />
+            ))}
+          </div>
+        )}
       </div>
+
+      {lightboxImage && (
+        <Lightbox image={lightboxImage} onClose={closeLightbox} />
+      )}
     </div>
   );
 };
